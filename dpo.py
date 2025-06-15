@@ -31,34 +31,6 @@ class SVM(nn.Module):
     def forward(self, x):
         return self.linear(x)
 
-class MoS_alter(nn.Module):
-    def __init__(self,svm_list,device):
-        super(MoS_alter, self).__init__()
-        self.device = device
-        self.svms = []
-        self.svm_num = len(svm_list)
-        self.top_k = 6
-        for i in svm_list:
-            self.svms.append(torch.load(svms_path.format(i)).to(self.device))
-            # self.svms.append(ffn(4096, 11008, 4096).to(self.device))
-        self.gate = nn.Linear(len(svm_list) * 4096 ,len(svm_list), bias=False).to(self.device)
-        self.vote = nn.Linear(len(svm_list), len(svm_list), bias=False).to(self.device)
-        
-
-    
-    def forward(self, X):
-        X = torch.tensor(X, dtype=torch.float32).to(self.device)
-        predict = 0
-        predict_list = []
-        tmp_list = []
-        for i,svm in enumerate(self.svms):
-            tmp = self.svms[i](X[i * 4096 : (i + 1) * 4096])
-            tmp_list.append(tmp)
-        t = torch.cat(tmp_list, dim=0)
-        vote_weight = torch.sigmoid(self.vote(t))
-        for i,t in enumerate(tmp_list):
-            predict += vote_weight[i] * t
-        return predict, tmp_list
 
 class MoS_alter_fx(nn.Module):
     def __init__(self,svm_list,dim,device):
@@ -96,6 +68,7 @@ parser =  argparse.ArgumentParser()
 parser.add_argument('--data_path',type=str)
 parser.add_argument('--model_path',type=str)
 parser.add_argument('--model_ref_path',type=str)
+parser.add_argument('--hybrid_reward_path',type=str)
 parser.add_argument('--output_dir',type=str)
 
 args = parser.parse_args()
@@ -104,6 +77,7 @@ data_path = args.data_path
 model_dir = args.model_path
 model_ref_path = args.model_ref_path
 output_dir = args.output_dir
+hybrid_reward_path = args.hybrid_reward_path
 
 # model_dir = ''
 # data_path = ''
@@ -129,18 +103,7 @@ def preprocess_function(examples):
 
 
 
-# dataset = load_dataset(data_path)
-
-# # print(dataset['train'][0])
-
-
-
 dataset = load_dataset("json", data_files=data_path)
-# off-line
-# dataset = dataset.map(preprocess_function)
-# for idx in idx_list:
-#    dataset = dataset.remove_columns(idx)
-
 
 print(dataset)
 max_length = 4096
@@ -150,45 +113,12 @@ dataset = dataset.filter(
     and len(x["rejected"]) <= max_length
 )
 
-# dataset['train'] = dataset['train'].select(range(4000))
-# dataset['test'] = dataset['test'].select(range(2000))
-
-
-# model = LlamaForCausalLM.from_pretrained(model_dir,torch_dtype=torch.float32,device_map='auto')
-# model_ref = LlamaForCausalLM.from_pretrained(model_ref_path,torch_dtype=torch.float32,device_map='auto')
-
 model = AutoModelForCausalLM.from_pretrained(model_dir,torch_dtype=torch.float32,device_map='auto')
 model_ref = model = AutoModelForCausalLM.from_pretrained(model_dir,torch_dtype=torch.float32,device_map='auto') 
 
-# tokenizer = LlamaTokenizer.from_pretrained(model_dir)
 tokenizer = AutoTokenizer.from_pretrained(model_dir)
 tokenizer.pad_token = tokenizer.eos_token
 
-
-
-
-# output_dir="./dpo-mos-self-loss-doubleTrain-b0.25-g0.75/"
-
-# training_args = transformers.TrainingArguments(
-#             per_device_train_batch_size=4,
-#             gradient_accumulation_steps=8,
-            
-
-#             warmup_ratio=0.03,
-#             num_train_epochs=3,
-#             learning_rate=2e-5,
-#             fp16=True,
-#             logging_steps=10,
-#             optim="adamw_torch",
-#             evaluation_strategy="no",
-#             save_strategy="steps",
-#             save_steps=2000,
-#             output_dir=output_dir,
-#             save_total_limit=1,
-            
-
-            
-#         ),
 
 dpo_args = DPOConfig(
 
@@ -208,8 +138,6 @@ dpo_args = DPOConfig(
     max_steps=100,
     output_dir=output_dir,
     save_total_limit=1,
-    # loss_type='robust',
-    label_smoothing=0
     
 
     
@@ -219,13 +147,11 @@ dpo_trainer = DPOTrainer(
     model,
     model_ref,
     args=dpo_args,
-    # beta=0.05,
-    beta=0.5,
+    beta=0.15,
     train_dataset=dataset['train'],
-    # train_dataset=dataset,
-
     tokenizer=tokenizer,
     model_init_kwargs=None,
+    hybrid_reward_path=hybrid_reward_path
 )
 
 

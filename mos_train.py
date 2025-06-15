@@ -28,34 +28,6 @@ class SVM(nn.Module):
     def forward(self, x):
         return self.linear(x)
 
-class MoS_alter(nn.Module):
-    def __init__(self,svm_list,device):
-        super(MoS_alter, self).__init__()
-        self.device = device
-        self.svms = []
-        self.svm_num = len(svm_list)
-        self.top_k = 6
-        for i in svm_list:
-            self.svms.append(torch.load(svms_path.format(i)).to(self.device))
-            # self.svms.append(ffn(4096, 11008, 4096).to(self.device))
-        self.gate = nn.Linear(len(svm_list) * 4096 ,len(svm_list), bias=False).to(self.device)
-        self.vote = nn.Linear(len(svm_list), len(svm_list), bias=False).to(self.device)
-        
-
-    
-    def forward(self, X):
-        # X = torch.tensor(X, dtype=torch.float32).to(self.device)
-        predict = 0
-        tmp_list = []
-        for i,svm in enumerate(self.svms):
-            tmp = self.svms[i](X[i * 4096 : (i + 1) * 4096])
-            tmp_list.append(tmp)
-        t = torch.cat(tmp_list, dim=0)
-        vote_weight = torch.sigmoid(self.vote(t))
-        for i,t in enumerate(tmp_list):
-            predict += vote_weight[i] * t
-        return predict, tmp_list
-
 class MoS_alter_fx(nn.Module):
     def __init__(self,svm_list,dim,device):
         super(MoS_alter_fx, self).__init__()
@@ -88,11 +60,6 @@ if torch.cuda.is_available():
     print("here:",device)
 
 
-
-# file_path = "test_sft_alpaca_preference.jsonl"
-# model_dir = "./llama-hf"
-# adapter_path = "./lora-alpaca-preferencr-sft/"
-
 def find_first_digit(string):
     match = re.search(r'[12]', string)
     if match:
@@ -113,11 +80,7 @@ parser.add_argument('--layer',default=40,type=int)
 parser.add_argument('--model_name',type=str)
 
 debug = False
-
-
 args = parser.parse_args()
-# os.environ["CUDA_VISIBLE_DEVICES"] = args.gpus
-# print(os.environ["CUDA_VISIBLE_DEVICES"],os.environ["WORLD_SIZE"])
 
 file_path = args.data_path
 model_dir = args.model_path
@@ -138,12 +101,10 @@ best_acc = 0
 best_acc_soft = 0
 best_acc_true = 0
 
-print("data_path:",file_path)
-print("model_path:",model_dir)
-print(os.environ["CUDA_VISIBLE_DEVICES"])
+# print("data_path:",file_path)
+# print("model_path:",model_dir)
+# print(os.environ["CUDA_VISIBLE_DEVICES"])
 
-# print("what the beat",test_flag)
-# if test_flag is not None:
 generation_config = dict(
     do_sample=False,
     num_beams=1,
@@ -152,20 +113,6 @@ generation_config = dict(
     return_dict_in_generate=True,
     max_new_tokens=1
     )
-# else:
-# print("what the how")
-# generation_config = dict(
-#     do_sample=True,
-#     temperature=temperature,
-#     top_k = 8,
-#     top_p = 0.9,
-#     repetition_penalty=1.1,
-#     output_hidden_states=False,
-#     # return_dict_in_generate=True,
-#     max_new_tokens=64,
-#     num_return_sequences=8
-#     )
-
 
 B_INST, E_INST = "[INST]", "[/INST]"
 B_SYS, E_SYS = "<<SYS>>\n", "\n<</SYS>>\n\n"
@@ -194,11 +141,6 @@ model = LlamaForCausalLM.from_pretrained (model_dir,device_map='auto')
 tokenizer = AutoTokenizer.from_pretrained (model_dir)
 tokenizer.pad_token = tokenizer.eos_token
 
-# if adapter_path is not None:
-#     model.load_adapter(adapter_path)
-#     model.enable_adapters()
-#     print("lora_path:",adapter_path)
-
 
 print(model)
 # exit()
@@ -219,7 +161,6 @@ print("==============================================")
 max_batch_size = 128
 
 
-# sys_prompt = "Which response of the following statement is safer?"
 dialogs = [] 
 tag_list = []
 inst_len = len("Please respond to my input actively and cooperatively." + "input:")
@@ -270,16 +211,7 @@ for index, example in tqdm(enumerate(dialogs)):
     )
     sample_result = []
     layers_hs = []
-    
-    # print(sample_output.hidden_states)
 
-    # print(inputs)
-    # print(len(inputs))
-    # print(len(inputs[0]),len(inputs[1]))
-    # print("->",len(sample_output.hidden_states))
-    # print("-->",len(sample_output.hidden_states[0]),len(sample_output.hidden_states[-1]))
-    # print("--->",len(sample_output.hidden_states[0][0]),len(sample_output.hidden_states[0][-1]))
-    # print(sample_output.hidden_states)
     for item in sample_output.hidden_states[0]:
         # print(len(item))
         # print(item.size())
@@ -295,15 +227,7 @@ for index, example in tqdm(enumerate(dialogs)):
             avg_r += ts
         avg_c = avg_c / l_c
         avg_r = avg_r / l_r
-        # print(item[0])
-        # print(last_r)
-        # print(avg_c,avg_r)
-        # exit()
-        # print(last)
-        # print(last.size())
 
-        # exit()
-        # last = last.reshape(1, 4096)
         tmp_c.append(avg_c)
         tmp_r.append(avg_r)
     if dim == 4096:
@@ -312,9 +236,6 @@ for index, example in tqdm(enumerate(dialogs)):
     else:
         tmp_c = torch.cat(tmp_c[1:41])
         tmp_r = torch.cat(tmp_r[1:41])
-        # print(tmp_c.size())
-        # print(last_c.size())
-        # exit()
 
     data_chosen.append(tmp_c)
     data_rejected.append(tmp_r)
@@ -338,28 +259,13 @@ for e in range(epoch):
         optimizer.zero_grad()
         c,_ = mos_model(data_chosen[idx])
         r,_ = mos_model(data_rejected[idx])
-        
-        # print("margin:{},c:{},r:{}".format(c - r, c,r))
-        # print("debug:",_probe)
 
-        # mos_margin = 1
-        # mos_beta = 1
-        # loss = -F.logsigmoid(c * mos_beta - r * mos_beta - mos_margin) + criterion(c, torch.tensor([1.0]).to(device)) + criterion(r, torch.tensor([0.0]).to(device))
-
-        # loss = torch.mean(torch.max(torch.tensor(0.0).to(device), 1 - c))
-
-        loss = -F.logsigmoid(c - r -1).mean()
-        # loss = criterion(c, torch.tensor([1.0]).to(device)) + criterion(r, torch.tensor([0.0]).to(device)) # before 12_13
+        loss = -F.logsigmoid(c - r -1).mean() # hinge=1
         loss.backward()
         optimizer.step()
         optimizer.zero_grad()
 
         cum_loss += loss.item()
-        # r,_ = mos_model(data_rejected[idx])
-        # loss = torch.mean(torch.max(torch.tensor(0.0).to(device), 1 + r))
-        # loss.backward()
-        # cum_loss += loss.item()
-        # optimizer.step()
 
         print("margin:{},c:{},r:{}".format(c - r, c,r))
         margins += c - r
@@ -380,7 +286,7 @@ for e in range(epoch):
         if pd_c > 0 and pd_r < 0: true_correct += 1
     print("epoch:{},eval_acc:{},soft_acc:{}, truth_acc:{}".format(e,correct / (2 * total),soft_correct / total, true_correct / total))
 
-    save_name = f'./rebuttal_{model_name}'
+    save_name = f'./hybrid-rm_{model_name}'
 
     if correct > best_acc:
         best_acc = correct
@@ -395,33 +301,4 @@ for e in range(epoch):
         torch.save(mos_model, save_name + 'true' + '.pth')
 
 print("Training end.")
-# torch.save(mos_model, './mos4test_13b_hinge.pth')
-
-
-
-    # print(tmp.size())
-    # exit()
-    # tp = pd.DataFrame(tmp.reshape(33,4096))
-
-
-    # print("--------------------{}---------------------------".format(index))
-    # for i,ops in enumerate(sample_output):
-    #     tmp_rs = tokenizer.decode(ops,skip_special_tokens=True)
-    #     print("id{}:{}".format(i,tmp_rs))
-    #     print('\n~~~~~~~~~~~~~~~~~~~~~~~~~~~~\n')
-
-    #     rs_line = {'instruction':"Please respond to my input actively and cooperatively.input",'input':input_text[inst_len:],'output':tmp_rs[len(input_text):]}
-    #     sample_result.append(tmp_rs)
-
-    # results.append(sample_result)
-    
-    
 print("===========finish=========")
-# with open('./{}_{}.jsonl'.format(model_name, 'result'), 'w', encoding='utf-8') as fw:
-# with open(write_path, 'w', encoding='utf-8') as fw:
-#     # 将每个字典转换为JSON格式的字符串，并用换行符分隔
-#     for rss in results:
-#         fw.writelines(json.dumps(item, ensure_ascii=False) +'\n' for item in rss)
-#     # fw.write(json.dumps({"result":"====================================================================================="}, ensure_ascii=False) +'\n')
-
-
